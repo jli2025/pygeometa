@@ -46,6 +46,7 @@
 from datetime import date, datetime
 import logging
 import os
+import json
 from typing import Union
 
 from pygeometa import __version__
@@ -81,8 +82,7 @@ class OpenAireOutputSchema(BaseOutputSchema):
         :returns: `dict` of MCF content
         """
 
-        md = json.loads(metadata)
-
+        # Initialized mcf
         mcf = {
             'mcf': {
                 'version': '1.0',
@@ -95,13 +95,43 @@ class OpenAireOutputSchema(BaseOutputSchema):
                 }
             },
             'contact': {},
-            'distribution': {}
+            'distribution': {},
+            'tag': 'test'
         }
 
-        id_ = md.get('identifier', md.get('@id',''))
-        mcf['metadata']['identifier'] = id_
+        # Process metadata (convert XML to JSON if needed)
+        metadata = xml_to_json(metadata)
+        md = json.loads(metadata).get('response')
+        if md is None:
+            LOGGER.info('invalid openaire metadata')
+            return mcf
+        
 
-        # populate all properties
+        header = md.get('header')
+        result = md.get('results', {}).get('record', {}).get('result')[0]  # in some case no 'record', check later
+
+        # mcf: metadata
+        metadata_ = result.get('metadata', {}).get('oaf:entity', {}).get('oaf:result')
+        
+        ids_ = []
+
+        for i in metadata_.get('originalId'):
+            ids_.append(i.get('$'))
+
+        for i in metadata_.get('pid'):
+            ids_.append(i.get('$'))
+
+        adids_, id_ = process_id(ids_)
+        mcf['metadata']['identifier'] = id_
+        mcf['metadata']['additional_identifiers'] = adids_
+        mcf['metadata']['language'] = header.get('locale', {}).get('$')
+
+        print(mcf)
+
+
+
+        # id_ = md.get('identifier', md.get('@id',''))
+        # mcf['metadata']['identifier'] = id_
         
         return mcf
 
@@ -117,6 +147,34 @@ class OpenAireOutputSchema(BaseOutputSchema):
         """
 
         # no write implementation for now
-      
-        return None
 
+        return 'test'
+      
+        # return None
+
+def xml_to_json(content: str) -> str:
+    """
+    Convert XML to JSON if content is detected as XML
+    
+    Write it later
+    """
+    return content
+
+
+def process_id(ids: list) -> tuple[list, str]:
+
+    """
+    Get the identifier and additional_identifier from the list of originalIds and pids
+    
+    """
+    
+    if len(ids) < 1:
+        return [], None
+    else:
+        unique_ids = list(set(ids))
+        main_id = unique_ids[0]
+        for i in unique_ids:
+            if i.startswith('10.'): # use doi is main id if exists
+                main_id = i
+                break
+        return unique_ids, main_id
