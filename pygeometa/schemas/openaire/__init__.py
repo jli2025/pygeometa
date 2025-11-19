@@ -107,32 +107,34 @@ class OpenAireOutputSchema(BaseOutputSchema):
             return mcf
         
 
-        header = md.get('header')
-        result = md.get('results', {}).get('record', {}).get('result')[0]  # in some case no 'record', check later
+        header_ = md.get('header')
+        result_ = md.get('results', {}).get('record', {}).get('result')[0]  # in some case no 'record', check later
 
         # mcf: metadata
-        metadata_ = result.get('metadata', {}).get('oaf:entity', {}).get('oaf:result')
+        metadata_ = result_.get('metadata', {}).get('oaf:entity', {}).get('oaf:result')
+
+        pids_ = metadata_.get('pid')
+
+        pids_value_ = [i.get('$') for i in pids_]
+        children_instances_ = metadata_.get('children', {}).get('instance')
+        main_id_, main_instance_ = process_id_and_instance(pids_, children_instances_)
+
+        mcf['metadata']['identifier'] = main_id_
+        mcf['metadata']['additional_identifiers'] = pids_value_
+        mcf['metadata']['language'] = header_.get('locale', {}).get('$')
+
+        ## relation
         
-        ids_ = []
-
-        for i in metadata_.get('originalId'):
-            ids_.append(i.get('$'))
-
-        for i in metadata_.get('pid'):
-            ids_.append(i.get('$'))
-
-        adids_, id_ = process_id(ids_)
-        mcf['metadata']['identifier'] = id_
-        mcf['metadata']['additional_identifiers'] = adids_
-        mcf['metadata']['language'] = header.get('locale', {}).get('$')
-
+        resource_type_ = metadata_.get('resourcetype', {}).get('@classname')
+        instance_type_ = main_instance_.get('instancetype', {}).get('@classname')
+        if resource_type_ is not None and resource_type_ != 'UNKNOWN':
+            mcf['metadata']['hierarchylevel'] = resource_type_
+        elif instance_type_ is not None and instance_type_ != 'UNKNOWN':
+            mcf['metadata']['hierarchylevel'] = instance_type_
+        
+        mcf['metadata']['datestamp'] = result_.get('header', {}).get('dri:dateOfCollection', {}).get('$')
+     
         print(mcf)
-
-
-
-        # id_ = md.get('identifier', md.get('@id',''))
-        # mcf['metadata']['identifier'] = id_
-        
         return mcf
 
     def write(self, mcf: dict, stringify: str = True) -> Union[dict, str]:
@@ -161,20 +163,33 @@ def xml_to_json(content: str) -> str:
     return content
 
 
-def process_id(ids: list) -> tuple[list, str]:
+def process_id_and_instance(ids: list, instances: list) -> tuple[str, object]:
+    """
+    Find one pair of children instance and pid with the same doi. 
+    Use the instance as the entry of mcf attributes. Use the doi as the identifier.
+    If can't find a match, use instance[0] and pid[0]
+    """
 
-    """
-    Get the identifier and additional_identifier from the list of originalIds and pids
-    
-    """
-    
-    if len(ids) < 1:
-        return [], None
-    else:
-        unique_ids = list(set(ids))
-        main_id = unique_ids[0]
-        for i in unique_ids:
-            if i.startswith('10.'): # use doi is main id if exists
-                main_id = i
+    # get the first doi as main id
+    if len(ids) == 0:
+        LOGGER.info('identifier missed')
+        return None, instances[0] if instances else None
+    first_id = ids[0]
+    main_id = first_id.get('$') if first_id else None
+    if len(ids) > 1:
+        for i in ids:
+            if i.get('@classid') == "doi":
+                main_id = i.get('$')
                 break
-        return unique_ids, main_id
+    if len(instances) == 0:
+        return main_id, None
+    # get the instance matched with the main id
+    main_instance = instances[0]
+    for ins in instances:
+        pid = ins.get('pid', {})
+        pid_value = pid.get('$') if pid else None
+        if pid_value == main_id:
+            main_instance = ins
+            break
+    return main_id, main_instance
+    
