@@ -101,85 +101,84 @@ class OpenAireOutputSchema(BaseOutputSchema):
 
         # Process metadata (convert XML to JSON if needed)
         metadata = xml_to_json(metadata)
-        md = json.loads(metadata).get('response')
+        md = json.loads(metadata)
+
         if md is None:
             LOGGER.info('invalid openaire metadata')
             return mcf
         
 
         header_ = md.get('header')
-        result_ = md.get('results', {}).get('record', {}).get('result')[0]  # in some case no 'record', check later
+        metadata_ = md.get('results')[0]  
 
         # mcf: metadata
-        metadata_ = result_.get('metadata', {}).get('oaf:entity', {}).get('oaf:result')
 
-        pids_ = metadata_.get('pid')
+        pids_ = metadata_.get('pids')
 
-        pids_value_ = [i.get('$') for i in pids_]
-        children_instances_ = metadata_.get('children', {}).get('instance')
+        pids_value_ = [i.get('value') for i in pids_]
+        children_instances_ = metadata_.get('instances')
         main_id_, main_instance_ = process_id_and_instance(pids_, children_instances_)
 
         mcf['metadata']['identifier'] = main_id_
         mcf['metadata']['additional_identifiers'] = pids_value_
-        mcf['metadata']['language'] = header_.get('locale', {}).get('$')
 
-        ## relation
-        
-        resource_type_ = metadata_.get('resourcetype', {}).get('@classname')
-        instance_type_ = main_instance_.get('instancetype', {}).get('@classname')
-        if resource_type_ is not None and resource_type_ != 'UNKNOWN':
-            mcf['metadata']['hierarchylevel'] = resource_type_
-        elif instance_type_ is not None and instance_type_ != 'UNKNOWN':
+        instance_type_ = main_instance_.get('type')
+        if instance_type_:
             mcf['metadata']['hierarchylevel'] = instance_type_
         
-        mcf['metadata']['datestamp'] = result_.get('header', {}).get('dri:dateOfCollection', {}).get('$')
-        mcf['metadata']['dataseturi'] = main_instance_.get('webresource', {}).get('url', {}).get('$')
+        date_of_collection = metadata_.get('dateOfCollection')
+        if date_of_collection:
+            mcf['metadata']['datestamp'] = metadata_.get('dateOfCollection')
+
+        urls = main_instance_.get('urls')
+        if urls:
+            mcf['metadata']['dataseturi'] = urls[0]
 
         # mcf: identification
+        language_ = metadata_.get('language', {}).get('code')
+        if language_:
+            mcf['identification']['language'] = language_
+        
+        main_title = metadata_.get('mainTitle')
+        # subtitle also exists
+        if main_title:
+            mcf['identification']['title'] = main_title
+        
+        description_ = metadata_.get('descriptions')
+        if description_:
+            mcf['identification']['abstract'] = description_[0]
 
-        mcf['identification']['language'] = metadata_.get('language', {}).get('@classid')
-        title_ = metadata_.get('title', {})
-        if isinstance(title_, list):
-            mcf['identification']['title'] = [t.get('$') for t in title_]
-        elif isinstance(title_, dict):
-            mcf['identification']['title'] = title_.get('$')
-        description_ = metadata_.get('description', {}).get('$')
-        mcf['identification']['abstract'] = description_
-        ## edition/version
+        version_ = metadata_.get('version')
+        if version_:
+            mcf['identification']['edition'] = version_
+
         ## topiccategory
 
-        right_ = metadata_.get('bestaccessright', {}).get('@classname')
-        instance_right_ = main_instance_.get('accessright', {}).get('@classname')
+        right_ = metadata_.get('bestAccessRight', {}).get('label')
+        instance_right_ = main_instance_.get('accessRight', {}).get('label')
         if right_ is not None and right_ != 'unspecified':
             mcf['identification']['rights'] = right_
         elif instance_right_ is not None and instance_right_ != 'unspecified':
             mcf['identification']['rights'] = instance_right_
-        else:
-            mcf['identification']['rights'] = 'unspecified'
         
-        license_ = main_instance_.get('license', {}).get('$')
+        license_ = main_instance_.get('license')
         if license_:
             mcf['identification']['license'] = {'name': license_, 'url': ''}
         
         ## url
-        dates_ = metadata_.get('relevantdate')
         dates_dict = {}
-        if isinstance(dates_, list):
-            for d in dates_:
-                d_name_ = d.get('@classname')
-                d_value = d.get('$')
-                if d_name_ and d_value:
-                    dates_dict[d_name_] = d_value
-        elif isinstance(dates_, dict):
-            d_name_ = dates_.get('@classname')
-            d_value = dates_.get('$')
-            if d_name_ and d_value:
-                dates_dict[d_name_] = d_value
-        if dates_dict: 
+        p_date = metadata_.get('publicationDate')
+        e_date = metadata_.get('embargoEndDate')
+        if p_date:
+            dates_dict['publication'] = p_date
+        if e_date:
+            dates_dict['embargoend'] = e_date
+        if dates_dict:
             mcf['identification']['dates'] = dates_dict
+
         ## keywords
 
-        subjects_ = metadata_.get('subject')
+        subjects_ = metadata_.get('subjects')
         if isinstance(subjects_, dict):
             mcf['identification']['keywords'] = process_keywords([subjects_])
         elif isinstance(subjects_, list):
@@ -226,11 +225,11 @@ def process_id_and_instance(ids: list, instances: list) -> tuple[str, object]:
         LOGGER.info('identifier missed')
         return None, instances[0] if instances else None
     first_id = ids[0]
-    main_id = first_id.get('$') if first_id else None
+    main_id = first_id.get('value') if first_id else None
     if len(ids) > 1:
         for i in ids:
-            if i.get('@classid') == "doi":
-                main_id = i.get('$')
+            if i.get('schema') == "doi":
+                main_id = i.get('value')
                 break
     if len(instances) == 0:
         return main_id, None
@@ -240,12 +239,12 @@ def process_id_and_instance(ids: list, instances: list) -> tuple[str, object]:
     for ins in instances:
         pid = ins.get('pid', {})
         if isinstance(pid, list): # instance has multiple pid
-            pid_values = [i.get('$') for i in pid]
+            pid_values = [i.get('value') for i in pid]
             if main_id in pid_values:
                 main_instance = ins
                 break
         elif isinstance(pid, dict): # instance has one pid
-            if pid.get('$') == main_id:
+            if pid.get('value') == main_id:
                 main_instance = ins
                 break
         else:
@@ -259,7 +258,9 @@ def process_keywords(subjects: list) -> dict:
     group keywords by classid
     
     """
-    unique_kid = list(set([s.get('@classid') for s in subjects]))
+    print(subjects)
+    return {}
+    unique_kid = list(set([s.get('schema') for s in subjects]))
     
     keyword_dict = {kid: {'keywords': [], 'keywords_type': ''} for kid in unique_kid} 
     for kid in unique_kid:

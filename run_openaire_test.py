@@ -4,7 +4,7 @@ from pygeometa.core import import_metadata, read_mcf
 
 
 # read metadata - must be valid JSON for OpenAire schema
-with open('openaire_sample/sample2.txt', 'r') as file:
+with open('openaire_sample/newsample4.txt', 'r') as file:
     meta_str = file.read()
 
 from pygeometa.schemas.openaire import OpenAireOutputSchema
