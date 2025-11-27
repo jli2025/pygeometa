@@ -189,8 +189,6 @@ class OpenAireOutputSchema(BaseOutputSchema):
         orgs_ = metadata_.get('organizations', [])
         mcf['contact'] = process_contact(authors_, orgs_)
 
-
-        print(mcf)
         return mcf
 
     def write(self, mcf: dict, stringify: str = True) -> Union[dict, str]:
@@ -322,19 +320,20 @@ def process_contact(authors: list, orgs: list) -> dict:
             org_name = contact.get('legalName') 
             contactpoint_dict['organization'] = org_name
             pids = contact.get('pids', [])
-            for p in pids:
-                if p.get('scheme').lower() == 'ror':
-                    contactpoint_dict['url'] = id2url(p.get('scheme'), p.get('value'))
-                    break
-                elif p.get('scheme').lower() == 'grid':
-                    contactpoint_dict['url'] = id2url(p.get('scheme'), p.get('value'))
-                    break
-                elif p.get('scheme').lower() == 'wikidata':
-                    contactpoint_dict['url'] = id2url(p.get('scheme'), p.get('value'))
-                    break
-                elif p.get('scheme').lower() == 'isni':
-                    contactpoint_dict['url'] = id2url(p.get('scheme'), p.get('value'))
-                    break      
+            if pids is not None:
+                for p in pids:
+                    if p.get('scheme').lower() == 'ror':
+                        contactpoint_dict['url'] = id2url(p.get('scheme'), p.get('value'))
+                        break
+                    elif p.get('scheme').lower() == 'grid':
+                        contactpoint_dict['url'] = id2url(p.get('scheme'), p.get('value'))
+                        break
+                    elif p.get('scheme').lower() == 'wikidata':
+                        contactpoint_dict['url'] = id2url(p.get('scheme'), p.get('value'))
+                        break
+                    elif p.get('scheme').lower() == 'isni':
+                        contactpoint_dict['url'] = id2url(p.get('scheme'), p.get('value'))
+                        break      
         # Add to contactpoint dict
         if contactpoint_dict['individualname'] or contactpoint_dict['organization']:
             contact_dict[contact_uuid] = contactpoint_dict
