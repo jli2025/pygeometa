@@ -48,6 +48,7 @@ import logging
 import os
 import json
 from typing import Union
+import uuid
 
 from pygeometa import __version__
 from pygeometa.core import get_charstring
@@ -176,13 +177,18 @@ class OpenAireOutputSchema(BaseOutputSchema):
         if dates_dict:
             mcf['identification']['dates'] = dates_dict
 
-        ## keywords
 
         subjects_ = metadata_.get('subjects')
         if isinstance(subjects_, dict):
             mcf['identification']['keywords'] = process_keywords([subjects_])
         elif isinstance(subjects_, list):
             mcf['identification']['keywords'] = process_keywords(subjects_)
+
+        ## contact point
+        authors_ = metadata_.get('authors', [])
+        orgs_ = metadata_.get('organizations', [])
+        mcf['contact'] = process_contact(authors_, orgs_)
+
 
         print(mcf)
         return mcf
@@ -255,16 +261,102 @@ def process_keywords(subjects: list) -> dict:
     """
     convert openaire keywords to mcf keywords
 
-    group keywords by classid
+    group keywords by scheme
     
     """
-    print(subjects)
-    return {}
-    unique_kid = list(set([s.get('schema') for s in subjects]))
+    unique_scheme = list(set([s.get('subject', {}).get('scheme') for s in subjects]))
+
+    scheme_uuid_dict = {scheme: str(uuid.uuid4()) for scheme in unique_scheme}
+
+    keywords_dict = {
+    value: {
+        'keywords': [],
+        'vocabulary': {
+            'name': key
+        }
+    }
+    for key, value in scheme_uuid_dict.items()
+    }
+
+    for s in subjects:
+        s_value = s.get('subject')
+        for k, v in keywords_dict.items():
+            if s_value.get('scheme') == v.get('vocabulary', {}).get('name'):
+                v['keywords'].append(s_value.get('value'))
+                break 
+    return keywords_dict
+
+
+def process_contact(authors: list, orgs: list) -> dict:
+    """
+    Process authors and organizations into MCF contact format
     
-    keyword_dict = {kid: {'keywords': [], 'keywords_type': ''} for kid in unique_kid} 
-    for kid in unique_kid:
-        for s in subjects:
-            if s.get('@classid') == kid:
-                keyword_dict[kid]['keywords'].append(s.get('$'))
- 
+    :param authors: list of author objects
+    :param orgs: list of organization objects
+    
+    :returns: dict with UUID keys and contact point values
+    """
+    contact_dict = {}
+    contact_list = authors + orgs
+    
+    for contact in contact_list:
+        contact_uuid = str(uuid.uuid4())
+        # Initialize contact point structure
+        contactpoint_dict = {
+            'individualname': '',
+            'organization': '',
+            'url': ''
+        }
+        # Process authors
+        if 'fullName' in contact:
+            contactpoint_dict['individualname'] = contact.get('fullName')
+            pid = contact.get('pid')
+            if pid is not None and pid.get('id') is not None:
+                pid_scheme = pid.get('id', {}).get('scheme')
+                pid_value = pid.get('id', {}).get('value')
+                if pid_scheme is not None and pid_value is not None:
+                    contactpoint_dict['url'] = id2url(pid_scheme, pid_value)
+        
+        # Process organizations
+        elif 'legalName' in contact:
+            org_name = contact.get('legalName') 
+            contactpoint_dict['organization'] = org_name
+            pids = contact.get('pids', [])
+            for p in pids:
+                if p.get('scheme').lower() == 'ror':
+                    contactpoint_dict['url'] = id2url(p.get('scheme'), p.get('value'))
+                    break
+                elif p.get('scheme').lower() == 'grid':
+                    contactpoint_dict['url'] = id2url(p.get('scheme'), p.get('value'))
+                    break
+                elif p.get('scheme').lower() == 'wikidata':
+                    contactpoint_dict['url'] = id2url(p.get('scheme'), p.get('value'))
+                    break
+                elif p.get('scheme').lower() == 'isni':
+                    contactpoint_dict['url'] = id2url(p.get('scheme'), p.get('value'))
+                    break      
+        # Add to contactpoint dict
+        if contactpoint_dict['individualname'] or contactpoint_dict['organization']:
+            contact_dict[contact_uuid] = contactpoint_dict
+    
+    return contact_dict
+
+
+
+def id2url(scheme: str, id: str) -> str:
+    """
+    Convert orcid, wikidata, ror or grid value to url
+    """
+    if scheme.lower() == 'orcid':
+        return 'https://orcid.org/' + id
+    elif scheme.lower() == 'ror':
+        return id
+    elif scheme.lower() == 'grid':
+        return id
+    elif scheme.lower() == 'wikidata':
+        return 'https://www.wikidata.org/wiki/' + id
+    elif scheme.lower() == 'isni':
+        return 'https://isni.org/isni/' + id
+    else:
+        return None
+
