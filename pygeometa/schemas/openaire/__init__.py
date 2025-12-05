@@ -88,15 +88,9 @@ class OpenAireOutputSchema(BaseOutputSchema):
             'mcf': {
                 'version': '1.0',
             },
-            'spatial': {},
             'metadata': {},
-            'identification': {
-                'extents': {
-                    'spatial': []
-                }
-            },
+            'identification': {},
             'contact': {},
-            'distribution': {},
             'tag': 'test'
         }
 
@@ -115,13 +109,31 @@ class OpenAireOutputSchema(BaseOutputSchema):
         # mcf: metadata
 
         pids_ = metadata_.get('pids')
-
-        pids_value_ = [i.get('value') for i in pids_]
+        pids_schemevalue = [
+        {
+        'identifier': i.get('value'),
+        'scheme': i.get('scheme')
+         }
+        for i in pids_]
         children_instances_ = metadata_.get('instances')
         main_id_, main_instance_ = process_id_and_instance(pids_, children_instances_)
 
         mcf['metadata']['identifier'] = main_id_
-        mcf['metadata']['additional_identifiers'] = pids_value_
+        mcf['metadata']['additional_identifiers'] = pids_schemevalue
+
+        project_ = metadata_.get('projects')
+        if project_ is not None and isinstance(project_, list):
+            rel_project = []
+            for p in project_:
+                pids = p.get('pids', [])
+                if pids is None or len(pids) == 0:
+                    continue
+                pid = pids[0]
+                pro_dict = {'identifier': pid.get('value'), 'scheme': pid.get('scheme'), 'type': 'project'}
+                rel_project.append(pro_dict)
+            if len(rel_project) > 0:
+                mcf['metadata']['relations'] = rel_project
+
 
         instance_type_ = main_instance_.get('type')
         if instance_type_:
@@ -187,7 +199,11 @@ class OpenAireOutputSchema(BaseOutputSchema):
         ## contact point
         authors_ = metadata_.get('authors', [])
         orgs_ = metadata_.get('organizations', [])
-        mcf['contact'] = process_contact(authors_, orgs_)
+        authors_ = authors_ or []
+        orgs_ = orgs_ or []
+        contact_ = authors_ + orgs_
+        if len(contact_) > 0:
+            mcf['contact'] = process_contact(contact_)
 
         return mcf
 
@@ -285,7 +301,7 @@ def process_keywords(subjects: list) -> dict:
     return keywords_dict
 
 
-def process_contact(authors: list, orgs: list) -> dict:
+def process_contact(contact_list: list) -> dict:
     """
     Process authors and organizations into MCF contact format
     
@@ -295,7 +311,6 @@ def process_contact(authors: list, orgs: list) -> dict:
     :returns: dict with UUID keys and contact point values
     """
     contact_dict = {}
-    contact_list = authors + orgs
     
     for contact in contact_list:
         contact_uuid = str(uuid.uuid4())
